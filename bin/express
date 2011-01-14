@@ -51,6 +51,12 @@ var cssEngine;
 var templateEngine = 'jade';
 
 /**
+ * Language to use for app.
+ */
+
+var language = 'javascript';
+
+/**
  * Usage documentation.
  */
 
@@ -59,8 +65,9 @@ var usage = ''
   + '\n'
   + '\x1b[1mOptions\x1b[0m:\n'
   + '  -s, --sessions         Add session support\n'
-  + '  -t, --template ENGINE  Add template ENGINE support (jade|ejs). Defaults to jade\n'
-  + '  -c, --css ENGINE       Add stylesheet ENGINE support (less|sass). Defaults to plain css\n'
+  + '  -t, --template ENGINE  Add template ENGINE support (jade|ejs). Default: jade\n'
+  + '  -c, --css ENGINE       Add stylesheet ENGINE support (less|sass). Default: plain css\n'
+  + '  -l, --language LANG    Create app for LANGUAGE (javascript|coffeescript).  Default: javascript\n'
   + '  -v, --version          Output framework version\n'
   + '  -h, --help             Output help information\n'
   ;
@@ -159,7 +166,7 @@ var sass = [
  * App test template.
  */
 
-var appTest = [
+var jsAppTest = [
     ""
   , "// Run $ expresso"
   , ""
@@ -182,11 +189,33 @@ var appTest = [
   , "};"
 ].join('\n');
 
+var coffeeAppTest = [
+    ""
+  , "# Run $ expresso"
+  , ""
+  , "###"
+  , "Module dependencies."
+  , "###"
+  , ""
+  , "app = require '../app'"
+  , "assert = require 'assert'"
+  , ""
+  , "module.exports = "
+  , "  'GET /': ->"
+  , "    assert.response app, "
+  , "      {url: '/'}, "
+  , "      {status: 200, headers: { 'Content-Type': 'text/html; charset=utf-8' }},"
+  , "      (res) ->"
+  , "        assert.includes res.body, '<title>Express</title>'"
+  , ""
+].join('\n')
+
+
 /**
  * App template.
  */
 
-var app = [
+var jsApp = [
     ''
   , '/**'
   , ' * Module dependencies.'
@@ -232,6 +261,42 @@ var app = [
   , ''
 ].join('\n');
 
+var coffeeApp =[
+    'express = require \'express\''
+  , ''
+  , 'app = module.exports = express.createServer()'
+  , ''
+  , 'app.configure ->'
+  , '  app.set \'views\', __dirname + \'/views\''
+  , '  app.set \'view engine\', \':TEMPLATE\''
+  , '  app.use express.bodyDecoder()'
+  , '  app.use express.methodOverride(){sess}{css}'
+  , '  app.use app.router'
+  , '  app.use express.staticProvider __dirname + \'/public\''
+  , ''
+  , 'app.configure \'development\', ->'
+  , '  app.use express.errorHandler'
+  , '    dumpExceptions: true'
+  , '    showStack: true'
+  , ''
+  , 'app.configure \'production\', ->'
+  , '  app.use express.errorHandler()'
+  , ''
+  , '# Routes'
+  , ''
+  , 'app.get \'/\', (req, res) ->'
+  , '  res.render \'index\',' 
+  , '    locals:' 
+  , '      title: \'Express\''
+  , ''
+  , '# Only listen on $ coffee app.coffee'
+  , ''
+  , 'if not module.parent'
+  , '    app.listen 3000'
+  , '    console.log "Express server listening on port %d", app.address().port'
+  , ''
+].join('\n');
+
 // Parse arguments
 
 var args = process.argv.slice(2)
@@ -259,6 +324,12 @@ while (args.length) {
         ? (cssEngine = args.shift())
         : abort('--css requires an argument');
       break;
+    case '-l':
+    case '--language':
+      args.length
+        ? (language = args.shift())
+        : abort ('--language requires an argument');
+      break;
     case '-t':
     case '--template':
       args.length
@@ -271,6 +342,22 @@ while (args.length) {
 }
 
 // Generate application
+
+switch (language) {
+  case 'javascript':
+    var app = jsApp;
+    var appTest = jsAppTest;
+    break;
+  case 'coffeescript':
+    var app = coffeeApp;
+    var appTest = coffeeAppTest;
+    break;
+  default: 
+    abort("--language must be 'javascript' or 'coffeescript'.  Default: javascript");
+    break;
+}
+
+
 
 (function createApplication(path) {
   emptyDirectory(path, function(empty){
@@ -326,28 +413,57 @@ function createApplicationAt(path) {
       }
     });
     mkdir(path + '/test', function(){
-      write(path + '/test/app.test.js', appTest);
+      switch(language) {
+        case 'javascript':
+          write(path + '/test/app.test.js', appTest);
+          break;
+        case 'coffeescript':
+          write(path + '/test/app.test.coffee', appTest);
+          break; 
+      }
     });
 
     // CSS Engine support
     switch (cssEngine) {
       case 'sass':
       case 'less':
-        app = app.replace('{css}', '\n  app.use(express.compiler({ src: __dirname + \'/public\', enable: [\'' + cssEngine + '\'] }));');
-        break;
+        switch (language) {
+          case 'javascript':
+            app = app.replace('{css}', '\n  app.use(express.compiler({ src: __dirname + \'/public\', enable: [\'' + cssEngine + '\'] }));');
+            break;
+          case 'coffeescript':
+            app = app.replace('{css}', '\n  app.use express.compiler { src: __dirname + \'/public\', enable: [\'' + cssEngine + '\'] }'); 
+            break;
+        }
       default:
         app = app.replace('{css}', '');
     }
 
     // Session support
-    app = app.replace('{sess}', sessions
-      ? '\n  app.use(express.cookieDecoder());\n  app.use(express.session());'
-      : '');
+    switch (language) {
+      case 'javascript':
+        app = app.replace('{sess}', sessions
+        ? '\n  app.use(express.cookieDecoder());\n  app.use(express.session());'
+        : '');
+        break;
+      case 'coffeescript':
+        app = app.replace('{sess}', sessions
+        ? '\n  app.use express.cookieDecoder()\n  app.use express.session()'
+        : '');
+        break;
+    }
 
     // Template support
     app = app.replace(':TEMPLATE', templateEngine);
 
-    write(path + '/app.js', app);
+    switch(language) {
+      case 'javascript':
+        write(path + '/app.js', app);
+        break;
+      case 'coffeescript':
+        write(path + '/app.coffee', app);
+        break;
+    }
 
     // Suggestions
     process.on('exit', function(){
